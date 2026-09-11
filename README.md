@@ -13,11 +13,11 @@ rl-study/
 ├── 01_tabular_rl/
 │   └── taxi_q_learning.py      # Classical Q-Learning from scratch (No RL libraries)
 ├── 02_deep_rl/
-│   ├── cartpole_dqn.py         # Deep Q-Network baseline (Hard updates - Policy collapse)
+│   ├── cartpole_dqn.py         # Deep Q-Network baseline (Hard target updates - Training instability)
 │   └── cartpole_dqn_v2.py      # Stabilized DQN (Soft updates, optimized buffer & LR)
 └── plots/
     ├── taxi_rewards.png        # Convergence curve for Tabular RL
-    ├── cartpole_rewards.png    # Visual proof of Catastrophic Forgetting
+    ├── cartpole_rewards.png    # DQN baseline training instability
     └── cartpole_rewards_v2.png # Visual proof of Soft Update stabilization
 ```
 
@@ -36,7 +36,7 @@ rl-study/
 * **Analysis:** Around episode 220, as exploration decreased ($\epsilon \to 0.01$), the agent experienced a severe and persistent drop in performance. The observed instability motivated further investigation into replay distribution, target-network updates, and optimization stability.
 
 ### 3. Stabilized Deep RL: CartPole-v1 (DQN v2 - Polyak Averaging)
-*   **Objective:** Stabilize the deep function approximator against memory poisoning and target variance.
+*   **Objective:** Improve DQN training stability by addressing replay-distribution effects, target-network variance, and optimization sensitivity.
 *   **Engineering Adjustments (The Fixes):**
     1.  **Polyak Averaging (Soft Target Updates):** Replaced hard kopyalama intervals with smooth target network parameter updates on every single optimization step using $\theta_{\text{target}} \leftarrow \tau \theta_{\text{online}} + (1 - \tau) \theta_{\text{target}}$ where $\tau = 0.01$.
     2.  **Learning Rate Reduction:** Dropped $\alpha$ from `0.001` to `0.00025` to enforce safer gradient steps.
@@ -55,7 +55,7 @@ The 50-episode moving average curve shows a clear upward convergence trend towar
 | DQN v1: Baseline Mismatch (`cartpole_rewards.png`) | DQN v2: Soft Update Stabilized (`cartpole_rewards_v2.png`) |
 | :---: | :---: |
 | ![DQN v1](./plots/cartpole_rewards.png) | ![DQN v2](./plots/cartpole_rewards_v2.png) |
-| *Observation: Sudden, catastrophic dive right after hitting a performance peak at episode 220, flattening out permanently.* | *Observation: Continuous learning, robust stabilization, policy oscillation recovery, and multiple perfect 500-score streaks.* |
+| *Observation: A sudden and persistent performance drop occurs after reaching a high-performing region around episode 220.* | *Observation: Continuous learning, robust stabilization, policy oscillation recovery, and multiple perfect 500-score streaks.* |
 
 ---
 
