@@ -56,7 +56,7 @@ target_net = DQN(state_dim, action_dim)
 target_net.load_state_dict(online_net.state_dict())
 target_net.eval()
 
-# --- v2 HYPERPARAMETERS (HYPOTHESIS IMPLEMENTATION) ---
+# v2 HYPERPARAMETERS 
 lr = 0.00025                 # Hypothesis 2: Lower learning rate to prevent catastrophic forgetting
 gamma = 0.99
 batch_size = 64
@@ -119,7 +119,7 @@ for episode in range(total_episodes):
             loss.backward()
             optimizer.step()
             
-            # --- HYPOTHESIS 1: SOFT UPDATE IMPLEMENTATION (POLYAK AVERAGING) ---
+            # SOFT UPDATE IMPLEMENTATION (POLYAK AVERAGING) 
             # Instead of copying weights every 1000 steps, we smoothly blend 1% of online weights into target weights every single step.
             for target_param, online_param in zip(target_net.parameters(), online_net.parameters()):
                 target_param.data.copy_(tau * online_param.data + (1.0 - tau) * target_param.data)
@@ -137,7 +137,7 @@ for episode in range(total_episodes):
 
 print(" DQN v2 Training completed successfully!")
 
-# 5. Stability Analysis & Plotting
+#  Analysis & Plotting
 plt.figure(figsize=(10, 5))
 plt.plot(rewards_per_episode, alpha=0.3, color="blue", label="Raw Episode Reward")
 moving_avg = np.convolve(rewards_per_episode, np.ones(25)/25, mode='valid')
