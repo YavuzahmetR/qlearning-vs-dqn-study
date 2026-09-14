@@ -53,8 +53,8 @@ env = gym.make("CartPole-v1")
 state_dim = env.observation_space.n if hasattr(env.observation_space, 'n') else env.observation_space.shape[0]  
 action_dim = env.action_space.n if hasattr(env.action_space, 'n') else env.action_space.shape[0]
 
-print(f"State boyutları (Giriş katmanı için): {state_dim}")    # CartPole için 4 basacaktır
-print(f"Action boyutları (Çıkış katmanı için): {action_dim}")  # CartPole için 2 basacaktır
+print(f"State dim: {state_dim}")    #  4
+print(f"Action dim: {action_dim}")  #  2 
 
 # Two identical neural networks (Secret Weapon #2)
 online_net = DQN(state_dim, action_dim)
@@ -107,7 +107,7 @@ for episode in range(total_episodes):
         next_state, reward, done, truncated, info = env.step(action)
 
         is_terminal = done or truncated
-        # Push this step to our Experience Replay memory 
+        # Push this step to Experience Replay memory 
         memory.push(state,action,reward,next_state,is_terminal)
 
         total_reward += reward
@@ -117,7 +117,7 @@ for episode in range(total_episodes):
         if len(memory) > batch_size:
             states, actions, rewards, next_states, dones = memory.sample(batch_size)
 
-            # --- BELLMAN ALIGNED LOSS COMPUTATION ---
+            # BELLMAN ALIGNED LOSS COMPUTATION
             # Current Prediction: What our Online Net thinks this action is worth
 
             current_q = online_net(states).gather(1,actions.unsqueeze(1)).squeeze(1)
@@ -149,7 +149,7 @@ for episode in range(total_episodes):
     
 print("DQN Training completed successfully!")
 
-# 5. Stability Analysis & Plotting
+# Analysis & Plotting
 plt.figure(figsize=(10, 5))
 plt.plot(rewards_per_episode, alpha=0.3, color="blue", label="Raw Episode Reward")
 moving_avg = np.convolve(rewards_per_episode, np.ones(25)/25, mode='valid')
