@@ -1,61 +1,130 @@
-# Reinforcement Learning Literacy: From Tabular Methods to Deep Q-Networks
+# Q-Learning and DQN Study
 
-This repository contains a comparative study on Reinforcement Learning (RL) architectures, focusing on the transition from classical tabular methods to modern Deep Reinforcement Learning. 
+## Overview
 
-The project is structured as an engineering-oriented experiment, analyzing exploration/exploitation trade-offs, target-network stability, and practical approaches to improving DQN training stability.
+Three small reinforcement-learning implementations:
 
----
+- A Q-table for **Taxi-v3**, with 500 discrete states and six actions.
+- A **CartPole-v1 DQN** with periodic hard target-network updates.
+- A second CartPole DQN with soft updates, a lower learning rate and a larger
+  replay buffer.
 
-## 📁 Repository Structure
+Taxi and CartPole are different tasks. Their reward values cannot rank tabular
+Q-learning against DQN. The two CartPole configurations are the direct comparison.
+
+## Workflow
 
 ```text
-rl-study/
-├── 01_tabular_rl/
-│   └── taxi_q_learning.py      # Classical Q-Learning from scratch (No RL libraries)
-├── 02_deep_rl/
-│   ├── cartpole_dqn.py         # Deep Q-Network baseline (Hard target updates - Training instability)
-│   └── cartpole_dqn_v2.py      # Stabilized DQN (Soft updates, optimized buffer & LR)
-└── plots/
-    ├── taxi_rewards.png        # Convergence curve for Tabular RL
-    ├── cartpole_rewards.png    # DQN baseline training instability
-    └── cartpole_rewards_v2.png # Visual proof of Soft Update stabilization
+Observation -> epsilon-greedy action -> environment step -> reward and next state
+            -> Q-table update, or replay sample and neural-network update
+            -> next episode -> training reward curve
 ```
 
----
+Taxi stores an action value for each discrete state. CartPole instead uses a
+small neural network to estimate action values from four continuous measurements.
 
-## 🔬 Experiment Case Studies & Implementations
+Both DQNs use a replay buffer and a separate target network. The online network
+learns from the reward plus the discounted next-state estimate. A true terminal
+state has no next-state return; an external time limit stops the episode but does
+not zero that estimate. See [Gymnasium's time-limit explanation](https://gymnasium.farama.org/v0.26.3/tutorials/handling_time_limits/).
 
-### 1. Tabular RL: Taxi-v4 
-*   **Objective:** Train a taxi agent to pick up a passenger and drop them off at a destination using the shortest path without hitting walls.
-*   **Methodology:** Implemented a full **Q-Table (500 states x 6 actions)** entirely from scratch using pure Python/NumPy and the temporal difference **Bellman Equation** update loop. Used exponential $\epsilon$-greedy decay to smoothly transition from pure exploration ($\epsilon=1.0$) to exploitation.
-*   **Outcome:** Highly stable convergence. The agent learned the exact penaly-minimization path, improving the average total reward from approximately -285.66 to around -7.32, indicating that the agent learned increasingly efficient routes and reduced unnecessary penalties.
+## Configurations
 
-### 2. Deep RL Baseline: CartPole-v1 (DQN v1 - Training Instability)
-* **Objective:** Balance a pole on a moving cart using continuous sensory inputs (cart position, velocity, pole angle, and angular velocity).
-* **Architecture:** Implemented a PyTorch-based Multi-Layer Perceptron (MLP) with an Experience Replay Buffer and **Hard Target Network Updates**, where the target network parameters were synchronized every 1000 steps.
-* **Analysis:** Around episode 220, as exploration decreased ($\epsilon \to 0.01$), the agent experienced a severe and persistent drop in performance. The observed instability motivated further investigation into replay distribution, target-network updates, and optimization stability.
+| Setting | Taxi | DQN v1 | DQN v2 |
+|---|---:|---:|---:|
+| Episodes | 2,000 | 500 | 500 |
+| Learning rate | 0.1 | 0.001 | 0.00025 |
+| Discount factor | 0.6 | 0.99 | 0.99 |
+| Replay capacity | — | 10,000 | 50,000 |
+| Replay batch size | — | 64 | 64 |
+| Target update | — | Copy every 1,000 environment steps | Blend 1% after each optimization step |
+| Hidden layers | — | 64, 64 with ReLU | 64, 64 with ReLU |
 
-### 3. Stabilized Deep RL: CartPole-v1 (DQN v2 - Polyak Averaging)
-*   **Objective:** Improve DQN training stability by addressing replay-distribution effects, target-network variance, and optimization sensitivity.
-*   **Engineering Adjustments (The Fixes):**
-    1.  **Polyak Averaging (Soft Target Updates):** Replaced hard kopyalama intervals with smooth target network parameter updates on every single optimization step using $\theta_{\text{target}} \leftarrow \tau \theta_{\text{online}} + (1 - \tau) \theta_{\text{target}}$ where $\tau = 0.01$.
-    2.  **Learning Rate Reduction:** Dropped $\alpha$ from `0.001` to `0.00025` to enforce safer gradient steps.
-    3.  **Buffer Capacity Scaling:** Expanded the `ReplayBuffer` to `50,000` transitions to retain valuable historical experiences far longer.
-*   **Outcome:** The modified configuration demonstrated substantially improved training stability. The agent successfully resisted permanent failure, maintained a high-performance plateau for hundreds of episodes, and **frequently reached the maximum environment cap of 500 survival steps**.
+Taxi has a local 99-step episode cap. CartPole-v1 has a 500-step environment cap.
+Exploration decreases exponentially toward epsilon 0.01. The default seed is
+42; Python, NumPy, PyTorch and the environment action sampler are seeded.
+The DQNs run on CPU with two PyTorch threads.
 
----
+## Results
 
-## 📊 Empirical Results & Learning Curves
+The three plots are from the supplied scripts with their default episode counts
+and seed 42. They show **training rewards**, including exploratory actions.
+They are not a separate greedy-policy evaluation or a multi-seed benchmark.
 
-### Tabular RL Convergence (`taxi_rewards.png`)
-The 50-episode moving average curve shows a clear upward convergence trend toward higher-performing policies, verifying that the domino-effect reward propagation successfully mapped out the gridworld topology.
+| Run | Final averaging window | Mean reward in that window | Best episode reward | Episodes reaching the 500-step cap |
+|---|---|---:|---:|---:|
+| Taxi Q-learning | Last 200 episodes | -6.68 | 15 | Not applicable |
+| CartPole DQN v1 | Last 50 episodes | 119.34 | 411 | 0 |
+| CartPole DQN v2 | Last 50 episodes | 435.16 | 500 | 98 |
 
-### Deep RL Multi-Version Comparison
+v2 has higher late-training reward in this run. This does not establish which
+of its three changed settings caused the difference or how other seeds behave.
 
-| DQN v1: Baseline Mismatch (`cartpole_rewards.png`) | DQN v2: Soft Update Stabilized (`cartpole_rewards_v2.png`) |
-| :---: | :---: |
-| ![DQN v1](./plots/cartpole_rewards.png) | ![DQN v2](./plots/cartpole_rewards_v2.png) |
-| *Observation: A sudden and persistent performance drop occurs after reaching a high-performing region around episode 220.* | *Observation: Continuous learning, robust stabilization, policy oscillation recovery, and multiple perfect 500-score streaks.* |
+![Taxi Q-learning rewards](plots/taxi_rewards.png)
 
----
+| DQN v1: hard updates | DQN v2: soft updates |
+|---|---|
+| ![DQN v1 rewards](plots/cartpole_rewards.png) | ![DQN v2 rewards](plots/cartpole_rewards_v2.png) |
 
+The 50-episode Taxi and 25-episode CartPole moving averages smooth the curves;
+they do not remove individual low-reward episodes.
+
+## Project layout
+
+```text
+01_tabular_rl/taxi_q_learning.py   # Complete Q-table training script
+02_deep_rl/cartpole_dqn.py         # Complete hard-update DQN script
+02_deep_rl/cartpole_dqn_v2.py      # Complete soft-update DQN script
+plots/                            # Three recorded training curves
+requirements.txt
+README.md
+```
+
+Each script can be read and run independently. The DQN files intentionally keep
+their small replay buffer and network classes visible in the same file.
+
+## Setup
+
+Python **3.12** was used to run the supplied configurations. From the repository
+root in Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+On macOS/Linux, use `python3.12 -m venv .venv` and the interpreter at
+`.venv/bin/python`. Environments are generated by Gymnasium; there is no dataset
+to download and no external RL training framework.
+
+## Usage
+
+Run any script from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe 01_tabular_rl/taxi_q_learning.py
+.\.venv\Scripts\python.exe 02_deep_rl/cartpole_dqn.py
+.\.venv\Scripts\python.exe 02_deep_rl/cartpole_dqn_v2.py
+```
+
+Default runs write their corresponding image to the repository's `plots/`
+directory, regardless of the current working directory.
+
+To check execution briefly while keeping the recorded plots:
+
+```powershell
+.\.venv\Scripts\python.exe 02_deep_rl/cartpole_dqn.py --episodes 10 --seed 42 --output-dir .cache/quick-run
+```
+
+All three scripts accept `--episodes`, `--seed` and `--output-dir`.
+A short run verifies execution but is not evidence that an agent has learned
+a useful policy. Environments and figures are closed after each run.
+
+## Limitations
+
+- Each recorded curve uses one seed; other seeds and machines may differ.
+- Training reward is not an independently measured final policy score.
+- v2 changes three settings together. A difference cannot be attributed only
+  to soft updates, the learning rate or buffer size.
+- No claim is made that either DQN configuration is generally superior.
+- Taxi's episode cap and continued exploration affect its reported rewards.

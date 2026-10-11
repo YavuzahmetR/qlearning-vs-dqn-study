@@ -1,88 +1,104 @@
-import os
+"""Train a Q-table on Taxi-v3 and save its learning curve."""
+
+import argparse
 import random
+from pathlib import Path
+
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 
-os.makedirs("../plots", exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-# Initialize Environment
-env = gym.make("Taxi-v4")
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--episodes", type=int, default=2000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "plots")
+    args = parser.parse_args()
+    if args.episodes < 1:
+        parser.error("--episodes must be positive")
+    if not 0 <= args.seed < 2**32:
+        parser.error("--seed must be between 0 and 2**32 - 1")
 
-#Initialize Q-table with zeros(500 states * 6 actions)
-state_size = env.observation_space.n if hasattr(env.observation_space, 'n') else env.observation_space.shape[0]
-action_size = env.action_space.n if hasattr(env.action_space, 'n') else env.action_space.shape[0]
-q_table = np.zeros((state_size,action_size))
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    # Taxi-v3 is available in the pinned Gymnasium 0.29.1.
+    env = gym.make("Taxi-v3")
+    env.action_space.seed(args.seed)
+    q_table = np.zeros((env.observation_space.n, env.action_space.n))
 
-# Hyperparameters
-total_episodes = 2000
-max_steps = 99
-alpha = 0.1 # Learning rate
-gamma = 0.6 # Discount factor
+    max_steps = 99
+    alpha = 0.1
+    gamma = 0.6
+    epsilon = 1.0
+    min_epsilon = 0.01
+    decay_rate = 0.005
+    rewards_per_episode = []
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-# Epsilon-Greedy parameters
-epsilon = 1.0 # Initial exploration rate
-max_epsilon = 1.0
-min_epsilon = 0.01
-decay_rate = 0.005 # decay rate for exploration
+    print(f"Taxi-v3 | episodes={args.episodes} | seed={args.seed}", flush=True)
+    for episode in range(args.episodes):
+        state, _ = env.reset(seed=args.seed if episode == 0 else None)
+        total_reward = 0
 
-rewards_per_episode = []
+        for _ in range(max_steps):
+            if random.random() < epsilon:
+                action = env.action_space.sample()
+            else:
+                action = int(np.argmax(q_table[state]))
 
-print("Taxi Q-Learning training is starting...")
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            # A real terminal state has no future return. A time limit does.
+            next_max = 0.0 if terminated else np.max(q_table[next_state])
+            target = reward + gamma * next_max
+            old_value = q_table[state, action]
+            q_table[state, action] = old_value + alpha * (target - old_value)
 
-# Training Loop
-for episode in range(total_episodes):
-    state, info = env.reset()
-    total_reward = 0
+            total_reward += reward
+            state = next_state
+            if terminated or truncated:
+                break
 
-    for step in range(max_steps):
-        # Action selection using Epsilon-Greedy strategy
-        if random.uniform(0,1) < epsilon:
-            # Explore: choose random action
-            action = env.action_space.sample() 
-        else:
-            # Exploit: choose best known action
-            action = np.argmax(q_table[state])
+        epsilon = min_epsilon + (1.0 - min_epsilon) * np.exp(-decay_rate * episode)
+        rewards_per_episode.append(total_reward)
+        if (episode + 1) % 200 == 0:
+            mean_reward = np.mean(rewards_per_episode[-200:])
+            print(
+                f"Episode {episode + 1}/{args.episodes} | "
+                f"last 200 mean reward={mean_reward:.2f}",
+                flush=True,
+            )
 
-        # Execute the chosen action in the environment
-        next_state, reward, done, truncated, info = env.step(action)
+    env.close()
+    window = min(50, len(rewards_per_episode))
+    moving_average = np.convolve(
+        rewards_per_episode, np.ones(window) / window, mode="valid"
+    )
+    plt.figure(figsize=(10, 5))
+    plt.plot(rewards_per_episode, alpha=0.3, color="blue", label="Episode reward")
+    plt.plot(
+        range(window - 1, len(rewards_per_episode)),
+        moving_average,
+        color="red",
+        label=f"{window}-episode moving average",
+    )
+    plt.title(f"Taxi-v3 Q-learning | seed {args.seed}")
+    plt.xlabel("Episode")
+    plt.ylabel("Total reward")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    output = args.output_dir / "taxi_rewards.png"
+    plt.savefig(output)
+    plt.close()
+    print(
+        f"Complete | last 200 mean={np.mean(rewards_per_episode[-200:]):.2f} | "
+        f"max reward={max(rewards_per_episode):.0f} | plot={output}",
+        flush=True,
+    )
 
-        #Bellman Equation
-        old_value = q_table[state,action]
-        next_max = np.max(q_table[next_state])
 
-        # Q-table memory update
-        q_table[state, action] = old_value + alpha * (reward + gamma * next_max - old_value)
-
-        total_reward += reward
-        state = next_state
-
-        if done or truncated:
-            break
-    # Epsilon Decay: Reduce exploration rate as the agent learns more about the world        
-    epsilon = min_epsilon + (max_epsilon - min_epsilon) * np.exp(-decay_rate * episode)
-
-    rewards_per_episode.append(total_reward)
-
-    if (episode + 1) % 200 == 0:
-        avg_reward = np.mean(rewards_per_episode[-200:])
-        print(f"Episode: {episode + 1}/{total_episodes} | 200-Ep Avg Reward: {avg_reward:.2f} | Current Epsilon: {epsilon:.3f}")
-print("Training completed successfully!")
-
-plt.figure(figsize=(10,8))
-plt.plot(rewards_per_episode, alpha=0.3, color="blue", label = "Raw Episode Reward")
-
-
-# Calculate 50-episode moving average to smooth out fluctuations and show clear trends
-moving_avg = np.convolve(rewards_per_episode, np.ones(50)/50, mode='valid')
-plt.plot(range(49, total_episodes), moving_avg, color="red", linewidth=2, label="50-Ep Moving Average")
-
-plt.title("Taxi Q-Learning Training Stability")
-plt.xlabel("Episodes")
-plt.ylabel("Total Reward")
-plt.legend()
-plt.grid(True)
-plt.savefig("../plots/taxi_rewards.png")
-print("Training plot saved inside 'plots/taxi_rewards.png'!")
-
+if __name__ == "__main__":
+    main()

@@ -1,169 +1,192 @@
-import collections
-import os
+"""Train a CartPole-v1 DQN with hard target-network updates."""
+
+import argparse
 import random
+from collections import deque
+from pathlib import Path
+
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from torch import nn, optim
 
-os.makedirs("../plots", exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReplayBuffer:
-    def __init__(self, capacity):
-        # deque automatically removes old items when capacity is reached
-        self.buffer = collections.deque(maxlen=capacity)
+    """Keep recent transitions and sample unrelated training examples."""
 
-    def push(self,state,action,reward,next_state,done):
-        self.buffer.append((state,action,reward,next_state,done))
+    def __init__(self, capacity: int) -> None:
+        self.buffer = deque(maxlen=capacity)
 
-    def sample(self,batch_size):
-        # Pick random transitions to break correlation between consecutive frames
+    def push(
+        self,
+        state: np.ndarray,
+        action: int,
+        reward: float,
+        next_state: np.ndarray,
+        terminated: bool,
+    ) -> None:
+        self.buffer.append((state, action, reward, next_state, terminated))
+
+    def sample(self, batch_size: int) -> tuple[torch.Tensor, ...]:
         transitions = random.sample(self.buffer, batch_size)
-        states,actions,rewards,next_states,dones = zip(*transitions)
-        return (torch.FloatTensor(np.array(states)),
-                torch.LongTensor(actions),
-                torch.FloatTensor(rewards),
-                torch.FloatTensor(np.array(next_states)),
-                torch.FloatTensor(dones))
+        states, actions, rewards, next_states, terminals = zip(
+            *transitions, strict=True
+        )
+        return (
+            torch.tensor(np.array(states), dtype=torch.float32),
+            torch.tensor(actions, dtype=torch.long),
+            torch.tensor(rewards, dtype=torch.float32),
+            torch.tensor(np.array(next_states), dtype=torch.float32),
+            torch.tensor(terminals, dtype=torch.float32),
+        )
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.buffer)
 
-#Deep Q-Network (The Estimator Network Architecture)
-class DQN(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super().__init__()
 
+class DQN(nn.Module):
+    """Estimate one Q-value per action from the four CartPole measurements."""
+
+    def __init__(self, state_dim: int, action_dim: int) -> None:
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, action_dim) # Outputs Q-values for each action
+            nn.Linear(64, action_dim),
         )
 
-    def forward(self, x):
-        return self.net(x)
-
-#Initialize Environment & Networks
-env = gym.make("CartPole-v1")  
-state_dim = env.observation_space.n if hasattr(env.observation_space, 'n') else env.observation_space.shape[0]  
-action_dim = env.action_space.n if hasattr(env.action_space, 'n') else env.action_space.shape[0]
-
-print(f"State dim: {state_dim}")    #  4
-print(f"Action dim: {action_dim}")  #  2 
-
-# Two identical neural networks (Secret Weapon #2)
-online_net = DQN(state_dim, action_dim)
-target_net = DQN(state_dim,action_dim)
-
-# Initialize target network with the exact same weights and freeze it
-target_net.load_state_dict(online_net.state_dict())
-target_net.eval()
-
-# Hyperparameters
-lr = 0.001
-gamma = 0.99
-batch_size = 64
-memory_capacity = 10000
-target_update_frequency = 1000 # How often to copy weights to target network
-total_episodes = 500
-
-memory = ReplayBuffer(memory_capacity)
-optimizer = optim.Adam(online_net.parameters(), lr=lr)
-loss_fn = nn.MSELoss()
-
-# Epsilon-Greedy parameters
-epsilon = 1.0
-min_epsilon = 0.01
-decay_rate = 0.01
-
-rewards_per_episode = []
-global_step = 0
-
-print("CartPole DQN Training is starting...")
-
-#Training Loop
-for episode in range(total_episodes):
-    state, info = env.reset()
-    total_reward = 0
-
-    while True:
-        global_step += 1
-        # Action Selection using Epsilon-Greedy
-        if random.uniform(0,1) < epsilon:
-            action = env.action_space.sample()
-        else:
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-
-            with torch.no_grad():
-              # Predict Q-values and pick the index of the highest one (argmax)  
-                action = online_net(state_tensor).argmax().item()
+    def forward(self, states: torch.Tensor) -> torch.Tensor:
+        return self.net(states)
 
 
-        next_state, reward, done, truncated, info = env.step(action)
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--episodes", type=int, default=500)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "plots")
+    args = parser.parse_args()
+    if args.episodes < 1:
+        parser.error("--episodes must be positive")
+    if not 0 <= args.seed < 2**32:
+        parser.error("--seed must be between 0 and 2**32 - 1")
 
-        is_terminal = done or truncated
-        # Push this step to Experience Replay memory 
-        memory.push(state,action,reward,next_state,is_terminal)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.set_num_threads(2)
+    env = gym.make("CartPole-v1")
+    env.action_space.seed(args.seed)
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n
+    online_net = DQN(state_dim, action_dim)
+    target_net = DQN(state_dim, action_dim)
+    target_net.load_state_dict(online_net.state_dict())
+    target_net.eval()
 
-        total_reward += reward
-        state = next_state
+    learning_rate = 0.001
+    gamma = 0.99
+    batch_size = 64
+    memory = ReplayBuffer(10000)
+    target_update_frequency = 1000
+    optimizer = optim.Adam(online_net.parameters(), lr=learning_rate)
+    loss_fn = nn.MSELoss()
+    epsilon = 1.0
+    min_epsilon = 0.01
+    decay_rate = 0.01
+    rewards_per_episode = []
+    global_step = 0
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Optimization Step (Train neural net if we have enough memory samples)
-        if len(memory) > batch_size:
-            states, actions, rewards, next_states, dones = memory.sample(batch_size)
+    print(
+        f"CartPole-v1 DQN v1 | episodes={args.episodes} | seed={args.seed}",
+        flush=True,
+    )
+    for episode in range(args.episodes):
+        state, _ = env.reset(seed=args.seed if episode == 0 else None)
+        total_reward = 0
 
-            # BELLMAN ALIGNED LOSS COMPUTATION
-            # Current Prediction: What our Online Net thinks this action is worth
+        while True:
+            global_step += 1
+            if random.random() < epsilon:
+                action = env.action_space.sample()
+            else:
+                state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+                with torch.no_grad():
+                    action = online_net(state_tensor).argmax().item()
 
-            current_q = online_net(states).gather(1,actions.unsqueeze(1)).squeeze(1)
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            # Store only termination in the target mask, not a time-limit stop.
+            memory.push(state, action, reward, next_state, terminated)
+            total_reward += reward
+            state = next_state
 
-             # Target Calculation: What our Frozen Target Net predicts for the next state
-            
-            with torch.no_grad():
-                max_next_q = target_net(next_states).max(1)[0]
+            if len(memory) > batch_size:
+                states, actions, rewards, next_states, terminals = memory.sample(
+                    batch_size
+                )
+                current_q = (
+                    online_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+                )
+                with torch.no_grad():
+                    max_next_q = target_net(next_states).max(1)[0]
+                    target_q = rewards + gamma * max_next_q * (1 - terminals)
 
-                target_q = rewards + gamma * max_next_q * (1 - dones)
+                loss = loss_fn(current_q, target_q)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            loss = loss_fn(current_q, max_next_q)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if global_step % target_update_frequency == 0:
+                target_net.load_state_dict(online_net.state_dict())
 
-        if global_step % target_update_frequency == 0:
-            target_net.load_state_dict(online_net.state_dict())
+            if terminated or truncated:
+                break
 
-        if is_terminal:
-            break
+        epsilon = min_epsilon + (1.0 - min_epsilon) * np.exp(-decay_rate * episode)
+        rewards_per_episode.append(total_reward)
+        if (episode + 1) % 50 == 0:
+            mean_reward = np.mean(rewards_per_episode[-50:])
+            print(
+                f"Episode {episode + 1}/{args.episodes} | "
+                f"last 50 mean reward={mean_reward:.2f}",
+                flush=True,
+            )
 
-    epsilon = min_epsilon + (1.0 - min_epsilon) * np.exp(-decay_rate * episode)
-    rewards_per_episode.append(total_reward)
+    env.close()
+    window = min(25, len(rewards_per_episode))
+    moving_average = np.convolve(
+        rewards_per_episode, np.ones(window) / window, mode="valid"
+    )
+    plt.figure(figsize=(10, 5))
+    plt.plot(rewards_per_episode, alpha=0.3, color="blue", label="Episode reward")
+    plt.plot(
+        range(window - 1, len(rewards_per_episode)),
+        moving_average,
+        color="red",
+        label=f"{window}-episode moving average",
+    )
+    plt.title(f"CartPole DQN v1: hard updates | seed {args.seed}")
+    plt.xlabel("Episode")
+    plt.ylabel("Total reward (survival steps)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    output = args.output_dir / "cartpole_rewards.png"
+    plt.savefig(output)
+    plt.close()
+    capped_episodes = sum(reward == 500 for reward in rewards_per_episode)
+    print(
+        f"Complete | last 50 mean={np.mean(rewards_per_episode[-50:]):.2f} | "
+        f"max reward={max(rewards_per_episode):.0f} | "
+        f"500-step episodes={capped_episodes} | plot={output}",
+        flush=True,
+    )
 
-    if (episode + 1) % 50 == 0:
-        avg_reward = np.mean(rewards_per_episode[-50:])
-        print(f"Episode: {episode + 1}/{total_episodes} | 50-Ep Avg Reward: {avg_reward:.2f} | Epsilon: {epsilon:.3f}")
-    
-print("DQN Training completed successfully!")
 
-# Analysis & Plotting
-plt.figure(figsize=(10, 5))
-plt.plot(rewards_per_episode, alpha=0.3, color="blue", label="Raw Episode Reward")
-moving_avg = np.convolve(rewards_per_episode, np.ones(25)/25, mode='valid')
-plt.plot(range(24, total_episodes), moving_avg, color="red", linewidth=2, label="25-Ep Moving Average")
-plt.title("CartPole DQN Training Stability")
-plt.xlabel("Episodes")
-plt.ylabel("Total Reward (Survival Steps)")
-plt.legend()
-plt.grid(True)
-plt.savefig("../plots/cartpole_rewards.png")
-print("Training plot saved inside 'plots/cartpole_rewards.png'!")
-
-
-
-
-
-
+if __name__ == "__main__":
+    main()
